@@ -1,0 +1,15 @@
+[project]
+name = "aqira"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "ksnp@git+https://github.com/evolutionq-gmbh/ksnp.git@v0.4.2#subdirectory=python",
+    "wgnlpy >=0.1.5",
+]
+
+[project.scripts]
+aqira = "aqira:main"
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12"]
+build-backend = "uv_build"

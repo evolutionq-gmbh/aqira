@@ -1,0 +1,72 @@
+services:
+  alice:
+    image: localhost/aqira-test:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    privileged: true
+    volumes:
+      - ./alice:/conf:ro
+    expose:
+      - "51820/udp"
+    command: [/conf/start.sh]
+
+  bob:
+    image: localhost/aqira-test:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    privileged: true
+    volumes:
+      - ./bob:/conf:ro
+    expose:
+      - "51820/udp"
+    command: [/conf/start.sh]
+
+  qkd_alice:
+    image: localhost/ksnp:latest
+    build:
+      context: .
+      dockerfile: ksnp.Dockerfile
+    init: true
+    expose:
+      - "5000/tcp"
+    command: ["--interface=", "--port=5000"]
+
+  qkd_bob:
+    image: localhost/ksnp:latest
+    build:
+      context: .
+      dockerfile: ksnp.Dockerfile
+    init: true
+    expose:
+      - "5000/tcp"
+    command: ["--interface=", "--port=5000"]
+
+  aqira_alice:
+    image: localhost/aqira:latest
+    build:
+      context: ..
+      dockerfile: test/aqira.Dockerfile
+    init: true
+    network_mode: service:alice
+    cap_add:
+      - NET_ADMIN
+    command: ["--host=qkd_alice", "--port=5000", "--interface=wg0", "--peer=31ZNbQz4cz3W8YBgAwePW4CVqQRiq+ArfAQ3tIlamyg="]
+
+  aqira_bob:
+    image: localhost/aqira:latest
+    build:
+      context: ..
+      dockerfile: test/aqira.Dockerfile
+    init: true
+    network_mode: service:bob
+    cap_add:
+      - NET_ADMIN
+    command: ["--host=qkd_bob", "--port=5000", "--interface=wg0", "--peer=zQRal+p7AezmKGqLPB7NcxhdK5nhtMXGHZIh4PqeQRY="]
+
+networks:
+  default:
+    internal: true
