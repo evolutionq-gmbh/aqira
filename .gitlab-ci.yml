@@ -1,0 +1,40 @@
+default:
+  image: ghcr.io/astral-sh/uv:trixie-slim
+
+variables:
+  DEBIAN_FRONTEND: noninteractive
+
+include:
+  - project: 'evolutionq-gmbh/infrastructure'
+    file: '.gitlab-ci-gerrit.yml'
+    rules:
+      - if: $GERRIT_API_PASSWORD
+
+build:
+  stage: build
+  script:
+    - uv build --wheel
+  artifacts:
+    paths:
+        - dist/aqira-*-py3-none-any.whl
+
+test:
+  stage: test
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - apt-get update
+    - >-
+      apt-get install -y --no-install-recommends
+      ca-certificates
+      cmake
+      gcc
+      git
+      g++
+      libjson-c-dev
+      ninja-build
+      uuid-dev
+  script:
+    - uv venv
+    - uv pip install dist/aqira-*-py3-none-any.whl
+    - uv run aqira --help
