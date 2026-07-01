@@ -6,6 +6,7 @@ from wgnlpy import (
     PublicKey,
     WireGuard,
 )
+from wgnlpy.sockaddr import sockaddr_in, sockaddr_in6
 from wgnlpy.wireguardpeer import (
     WireGuardPeer,
 )
@@ -22,7 +23,7 @@ class WgClient:
         peer_key: PublicKey,
     ) -> None:
         self._interface = interface
-        self._peer = peer_key
+        self._peer_key = peer_key
         self._wg: WireGuard | None = None
 
         self.disable_on_close = False
@@ -46,25 +47,34 @@ class WgClient:
 
     @property
     def peer_key(self) -> bytes:
-        return bytes(self._peer)
+        return bytes(self._peer_key)
 
     @property
     def handshake_time(self) -> float:
+        peer = self._peer()
+        return cast("float | None", peer.last_handshake_time) or 0.0
+
+    @property
+    def peer_address(self) -> sockaddr_in | sockaddr_in6:
+        peer = self._peer()
+        return peer.endpoint
+
+    def _peer(self) -> WireGuardPeer:
         assert self._wg is not None, "must be connected"
         peer = cast(
             "WireGuardPeer | None",
-            self._wg.get_interface(self._interface).peers.get(self._peer, None),
+            self._wg.get_interface(self._interface).peers.get(self._peer_key, None),
         )
         if peer is None:
-            msg = f"peer {self._peer} is no longer configured for interface {self._interface}"
+            msg = f"peer {self._peer_key} is no longer configured for interface {self._interface}"
             raise RuntimeError(msg)
-        return cast("float | None", peer.last_handshake_time) or 0.0
+        return peer
 
     def open(self) -> None:
         wg = WireGuard()
         wg_iface = wg.get_interface(self._interface)
-        if self._peer not in wg_iface.peers:
-            msg = f"peer {self._peer} not known to {self._interface}"
+        if self._peer_key not in wg_iface.peers:
+            msg = f"peer {self._peer_key} not known to {self._interface}"
             raise ValueError(msg)
 
         self._wg = wg
@@ -91,7 +101,7 @@ class WgClient:
         assert self._wg is not None, "must be connected"
         self._wg.set_peer(
             self._interface,
-            public_key=self._peer,
+            public_key=self._peer_key,
             preshared_key=key,
             update_only=True,
         )

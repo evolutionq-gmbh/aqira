@@ -56,7 +56,11 @@ services:
     network_mode: service:alice
     cap_add:
       - NET_ADMIN
-    command: ["--host=qkd_alice", "--port=5000", "--interface=wg0", "--peer=31ZNbQz4cz3W8YBgAwePW4CVqQRiq+ArfAQ3tIlamyg="]
+    expose:
+      - "51821/udp"
+    command: ["--host=qkd_alice", "--port=5000",
+              "--interface=wg0", "--peer_key=31ZNbQz4cz3W8YBgAwePW4CVqQRiq+ArfAQ3tIlamyg=",
+              "--sync_port=51821", "--peer_port=51821"]
 
   aqira_bob:
     image: localhost/aqira:latest
@@ -67,7 +71,11 @@ services:
     network_mode: service:bob
     cap_add:
       - NET_ADMIN
-    command: ["--host=qkd_bob", "--port=5000", "--interface=wg0", "--peer=zQRal+p7AezmKGqLPB7NcxhdK5nhtMXGHZIh4PqeQRY="]
+    expose:
+      - "51821/udp"
+    command: ["--host=qkd_bob", "--port=5000",
+              "--interface=wg0", "--peer_key=zQRal+p7AezmKGqLPB7NcxhdK5nhtMXGHZIh4PqeQRY=",
+              "--sync_port=51821", "--peer_port=51821"]
 
 networks:
   default:

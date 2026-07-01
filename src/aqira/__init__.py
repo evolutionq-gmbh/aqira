@@ -1,35 +1,40 @@
-import argparse
 from hashlib import blake2s
+from socket import AddressFamily, SocketKind, socket, getaddrinfo, IPPROTO_UDP
 from time import sleep, time
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 from uuid import UUID
+import argparse
 
 from wgnlpy import PublicKey, PresharedKey  # pyright: ignore[reportMissingTypeStubs]
 
 from .wg import WgClient
 from .qkd import QkdClient
+from .sync import SyncClient
 
 
 class QkdGuard:
     def __init__(
         self,
         qkd_address: tuple[str, int],
-        interface: str,
-        peer_key: PublicKey,
+        sync_socket: socket,
+        wg: WgClient,
+        peer_address: tuple[Any, ...],
         interval: float = 0.0,
     ) -> None:
         if interval < 0.0:
             raise ValueError
 
         self._qkd_address = qkd_address
+        self._sync_socket = sync_socket
+        self._peer_address = peer_address
+        self._wg = wg
+
         self._interval = interval
         self._key_delay = self._interval + (120.0 - self._interval % 120.0)
-        self._wg = WgClient(interface=interface, peer_key=peer_key)
         self._open = False
 
     def __enter__(self) -> Self:
-        self._wg.open()
         self._open = True
         return self
 
@@ -40,7 +45,6 @@ class QkdGuard:
         _exc_tb: TracebackType | None,
     ) -> bool | None:
         self._open = False
-        self._wg.close()
 
     def run(self) -> None:
         assert self._open, "must be running"
@@ -60,9 +64,9 @@ class QkdGuard:
             ).digest()
         )
 
-        running = True
         delay = 0.0
-        while running:
+        while True:
+            # Restart after delay, delay only after the first iteration.
             sleep(delay)
             delay = 5.0
 
@@ -75,21 +79,31 @@ class QkdGuard:
             ) as qkd:
                 pass
 
-                print("Wait for key")
-                psk = qkd.wait_key()
-                if psk is None:
-                    continue
+                print("Wait for auth key")
+                if (auth_psk := qkd.wait_key()) is None:
+                    break
+                with SyncClient(
+                    self._sync_socket, self._peer_address, auth_psk=auth_psk[0]
+                ) as sync:
+                    print("Wait for initial key")
+                    if (
+                        psk := qkd.wait_key()
+                    ) is None or not sync.sync_current_position(psk[1]):
+                        print("Unable to fetch and sync initial key")
+                        continue
 
-                while True:
-                    key_time = self._ensure_psk(psk)
+                    while True:
+                        key_time = self._ensure_psk(psk[0])
 
-                    if self._interval > (key_age := time() - key_time):
-                        print(f"Wait {self._interval - key_age} for interval")
-                        sleep(self._interval - key_age)
+                        if self._interval > (key_age := time() - key_time):
+                            print(f"Wait {self._interval - key_age} for interval")
+                            sleep(self._interval - key_age)
 
-                    psk = qkd.wait_key()
-                    if psk is None:
-                        return
+                        print("Wait for key")
+                        psk = qkd.wait_key()
+                        if psk is None or not sync.sync_current_position(psk[1]):
+                            print("Unable to fetch and sync key")
+                            return
 
     def _ensure_psk(self, psk: PresharedKey) -> float:
         """
@@ -161,6 +175,14 @@ def main() -> None:
     parser.add_argument(
         "--interval", metavar="SECONDS", required=False, type=float, default=0.0
     )
+    parser.add_argument("--sync_port", metavar="PORT", required=True, type=int)
+    parser.add_argument("--peer_port", metavar="PORT", required=True, type=int)
+    parser.add_argument(
+        "--sync_address", metavar="ADDRESS", required=False, type=str, default=None
+    )
+    parser.add_argument(
+        "--peer_address", metavar="ADDRESS", required=False, type=str, default=None
+    )
 
     args = parser.parse_args()
 
@@ -169,12 +191,40 @@ def main() -> None:
             f"WARN: PSK interval is not a multiple of the rekey delay ({WgClient.REKEY_DELAY} seconds)."
         )
 
-    client = QkdGuard(
-        (args.host, args.port), args.interface, args.peer_key, args.interval
-    )
+    with WgClient(interface=args.interface, peer_key=args.peer_key) as wg:
+        peer_address: tuple[AddressFamily, SocketKind, tuple[Any, ...]]
+        if args.peer_address is None:
+            addr = wg.peer_address.addr
+            peer_address = (
+                AddressFamily(wg.peer_address.family),
+                SocketKind.SOCK_DGRAM,
+                (str(addr), args.peer_port),
+            )
+        else:
+            for gai_addr in getaddrinfo(
+                args.peer_address,
+                args.peer_port,
+                type=SocketKind.SOCK_DGRAM,
+                proto=IPPROTO_UDP,
+            ):
+                peer_address = (gai_addr[0], gai_addr[1], gai_addr[4])
+                break
+            else:
+                raise RuntimeError(
+                    f"Unable to resolve peer address {args.peer_address}"
+                )
 
-    with client:
-        client.run()
+        with socket(family=peer_address[0], type=peer_address[1]) as sync_socket:
+            sync_socket.bind((args.sync_address or "", args.sync_port))
+
+            with QkdGuard(
+                (args.host, args.port),
+                sync_socket,
+                wg,
+                peer_address[2],
+                args.interval,
+            ) as client:
+                client.run()
 
 
 if __name__ == "__main__":

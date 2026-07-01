@@ -27,6 +27,7 @@ class QkdClient:
         self._key_size = key_size
         self._key_delay = key_delay
 
+        self.position = 0
         self._read_buf = bytearray()
         self._write_buf = bytearray()
         self._client = client.Client(self._read_buf, self._write_buf)
@@ -141,7 +142,7 @@ class QkdClient:
 
         return next_event
 
-    def wait_key(self) -> PresharedKey | None:
+    def wait_key(self) -> tuple[PresharedKey, int] | None:
         while (next_event := self._wait_event()) is not None:
             match next_event:
                 case event.Handshake():
@@ -159,10 +160,13 @@ class QkdClient:
                     if parameters.position != 0:
                         msg = "Stream resumption is not supported"
                         raise RuntimeError(msg)
+                    self.position = parameters.position
                 case event.KeyData(key_data=key_data):
                     assert len(key_data) == self._key_size
                     self._client.add_capacity(self._key_size)
-                    return PresharedKey(key_data)
+                    position = self.position
+                    self.position += len(key_data)
+                    return PresharedKey(key_data), position
                 case _:
                     return None
         return None
