@@ -59,6 +59,8 @@ class QkdClient:
             self._selector.register(
                 self._sock, selectors.EVENT_READ | selectors.EVENT_WRITE
             )
+
+            self._open_stream()
         except:
             if self._sock:
                 self._sock.close()
@@ -146,11 +148,10 @@ class QkdClient:
 
         return next_event
 
-    def wait_key(self) -> tuple[PresharedKey, int] | None:
+    def _open_stream(self) -> None:
         while (next_event := self._wait_event()) is not None:
             match next_event:
                 case event.Handshake():
-                    # Round up to match WG handshake interval
                     self._client.open_stream(
                         OpenParams(
                             destination=self._destination,
@@ -164,6 +165,18 @@ class QkdClient:
                     if parameters.position != 0:
                         raise RuntimeError("Stream resumption is not supported")
                     self.position = parameters.position
+                    return
+                case event.StreamRejected(
+                    code=code, parameters=parameters, message=message
+                ):
+                    raise RuntimeError(f"Failed to open stream: {code} {message}")
+                case _:
+                    raise RuntimeError(f"Unexpected stream event {next_event}")
+        raise EOFError("QKD connection closed")
+
+    def wait_key(self) -> tuple[PresharedKey, int] | None:
+        while (next_event := self._wait_event()) is not None:
+            match next_event:
                 case event.KeyData(key_data=key_data):
                     assert len(key_data) == self._key_size
                     self._client.add_capacity(self._key_size)
@@ -171,6 +184,6 @@ class QkdClient:
                     self.position += len(key_data)
                     return PresharedKey(key_data), position
                 case _:
-                    return None
+                    raise RuntimeError(f"Unexpected stream event {next_event}")
         logger.warning("QKD connection closed")
         return None
