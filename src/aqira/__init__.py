@@ -95,7 +95,7 @@ class QkdGuard:
 
                 if (auth_psk := qkd.wait_key()) is None:
                     logger.warning("QKD stream closed")
-                    break
+                    continue
                 with SyncClient(
                     self._sync_socket, self._peer_address, auth_psk=auth_psk[0]
                 ) as sync:

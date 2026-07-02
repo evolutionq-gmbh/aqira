@@ -128,7 +128,7 @@ class QkdClient:
                 if mask & selectors.EVENT_READ:
                     try:
                         data = self._sock.recv(4096)
-                    except Exception as e:
+                    except IOError:
                         logger.exception("Error on QKD connection")
                         self._sock = None
                         return None
@@ -140,7 +140,7 @@ class QkdClient:
                 if mask & selectors.EVENT_WRITE:
                     try:
                         count = self._sock.send(self._write_buf)
-                    except Exception as e:
+                    except IOError:
                         logger.exception("Error on QKD connection")
                         self._sock = None
                         return None

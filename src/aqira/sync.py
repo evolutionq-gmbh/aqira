@@ -116,7 +116,7 @@ class SyncClient:
 
         def check_pos() -> bool:
             return self._last_peer_position is not None and (
-                self._last_peer_position >= position or self._last_peer_position == -1
+                self._last_peer_position == position or self._last_peer_position == -1
             )
 
         with self._peer_position_cond:
@@ -201,7 +201,7 @@ class SyncClient:
                             position = pickle.load(input_sock)
                         except EOFError:
                             # Connection closed, stop thread
-                            break
+                            return
                         current_position = position
                         assert current_position is not None
                         self._send_message(position=current_position)
