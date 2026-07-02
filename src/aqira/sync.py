@@ -15,35 +15,42 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Message:
-    MAX_MESSAGE_SIZE: ClassVar[int] = 4 + blake2s.MAX_DIGEST_SIZE
+    MAX_MESSAGE_SIZE: ClassVar[int] = 4 + 1 + blake2s.MAX_DIGEST_SIZE
 
     position: int
+    retry: bool
     mac: bytes
 
     @classmethod
-    def new(cls, position: int, key: PresharedKey) -> Message:
-        payload = position.to_bytes(4, byteorder="little", signed=False)
+    def new(cls, position: int, retry: bool, key: PresharedKey) -> Message:
         msg = Message(
             position=position,
-            mac=hmac.digest(bytes(key), payload, digest=blake2s),
+            retry=retry,
+            mac=bytes(),
         )
+        msg.mac = hmac.digest(bytes(key), msg._payload(), digest=blake2s)
         return msg
 
     @classmethod
     def decode(cls, msg: bytes | bytearray) -> Message:
-        pos = int.from_bytes(msg[:4], byteorder="little", signed=False)
-        mac = bytes(msg[4:])
-        return Message(position=pos, mac=mac)
+        position = int.from_bytes(msg[:4], byteorder="little", signed=False)
+        retry = bool.from_bytes(msg[4:5])
+        mac = bytes(msg[5:])
+        return Message(position=position, retry=retry, mac=mac)
 
     def encode(self) -> bytes:
-        msg = bytearray()
-        msg.extend(self.position.to_bytes(4, byteorder="little", signed=False))
+        msg = self._payload()
         msg.extend(self.mac)
         return bytes(msg)
 
+    def _payload(self) -> bytearray:
+        msg = bytearray()
+        msg.extend(self.position.to_bytes(4, byteorder="little", signed=False))
+        msg.extend(self.retry.to_bytes(1))
+        return msg
+
     def validate(self, key: PresharedKey) -> bool:
-        payload = self.position.to_bytes(4, byteorder="little", signed=False)
-        return hmac.digest(bytes(key), payload, digest=blake2s) == self.mac
+        return hmac.digest(bytes(key), self._payload(), digest=blake2s) == self.mac
 
 
 class SyncClient:
@@ -127,26 +134,29 @@ class SyncClient:
         else:
             return result
 
-    def _read_message(self) -> None:
+    def _read_message(self) -> bool:
         reply_data, reply_addr = self._sync_socket.recvfrom(Message.MAX_MESSAGE_SIZE)
         logger.debug(f"Received message from {reply_addr[0]}")
         if reply_addr[0] != self._peer_address[0]:
             logger.debug(
                 f"Reply address mismatch, {reply_addr[0]} != {self._peer_address[0]}"
             )
-            return
+            return False
 
         reply_msg = Message.decode(reply_data)
         if not reply_msg.validate(self._auth_psk):
             logger.debug("Message uses invalid key")
-            return
+            return False
+
+        if reply_msg.retry:
+            return True
 
         if self._last_peer_position is not None:
             # Ignore stale messages.
             # Ignore resends if the position is the same.
             if reply_msg.position <= self._last_peer_position:
                 logger.debug(f"Stale message with position {reply_msg.position}")
-                return
+                return False
 
         logger.debug(f"Remote at position {reply_msg.position}")
 
@@ -154,8 +164,10 @@ class SyncClient:
             self._last_peer_position = reply_msg.position
             self._peer_position_cond.notify_all()
 
-    def _send_message(self, position: int) -> None:
-        msg = Message.new(position=position, key=self._auth_psk)
+        return False
+
+    def _send_message(self, position: int, retry: bool) -> None:
+        msg = Message.new(position=position, retry=retry, key=self._auth_psk)
         logger.debug(f"Sending message position {position} to {self._peer_address}")
         self._sync_socket.sendto(msg.encode(), self._peer_address)
 
@@ -193,18 +205,20 @@ class SyncClient:
                     # Timeout. If peer is running behind, resend current
                     # position.
                     if current_position is not None:
-                        self._send_message(position=current_position)
+                        self._send_message(position=current_position, retry=True)
                     continue
                 for key, _ in items:
                     if key.fileobj is input_sock:
                         try:
                             position = pickle.load(input_sock)
+                            assert type(position) is int, "position is int"
                         except EOFError:
                             # Connection closed, stop thread
                             return
                         current_position = position
                         assert current_position is not None
-                        self._send_message(position=current_position)
+                        self._send_message(position=current_position, retry=False)
 
                     if key.fileobj is self._sync_socket:
-                        self._read_message()
+                        if self._read_message() and current_position is not None:
+                            self._send_message(current_position, False)

@@ -25,29 +25,68 @@ initial data transferred via the tunnel may be subject to quantum attacks.
 An example invocation looks like:
 
 ```shell
-aqira --host localhost --port 5000 --interface wg0 --peer_key="31ZNbQz4cz3W8YBgAwePW4CVqQRiq+ArfAQ3tIlamyg="
+aqira --host localhost --port 5000 --interface wg0 --peer_key="31ZNbQz4cz3W8YBgAwePW4CVqQRiq+ArfAQ3tIlamyg=" --sync_port=51821 --peer_port=51821
 ```
 
-The host and port values specify the network address at which the KMS is
-reachable. The interface is the name of the WireGuard tunnel, and the peer_key
-the peer to configure the PSK for.
+The `host` and `port` values specify the network address at which the KMS is
+reachable. The `interface` is the name of the WireGuard tunnel, and the
+`peer_key` the peer to configure the PSK for.
 
 Optionally, the `--interval` option can be used to specify an additional
 interval by which to retrieve PSK keys.
+
+The `sync_port` and `peer_port` are the respectively the port to listen on for
+synchronization messages and the port to send them to. An optional
+`peer_address` specifies the address at which the peer is reachable. If not
+specified, the endpoint configured for the WireGuard interface is used. The
+optional `sync_address` specified the address to bind the listening socket on.
 
 Note that the program must be run as root, or with CAP_NET_ADMIN privileges.
 
 Operation
 ---------
 
-Aqira immediately sets the PSK to the first key retrieved from the QKD stream.
-After that, it will continue in a loop:
+When starting, a key stream is opened, using a key stream identifier derived
+from the public keys of the local and peer interfaces. The first key of this
+stream is then retrieved to be used to authenticate synchronization messages,
+ensuring the local instance and the peer access the same key stream.
+
+When subsequent keys are retrieved from the key stream, their position is sent
+using an authenticated message to the peer instance of Aqira. The same message
+is then awaited on, which ensures both the local instance and the peer have
+obtained the same key.
+
+The first PSK is set immediately after synchronization. Afterwards, the system
+enters a loop:
 
 First, the following WireGuard handshake is awaited. WireGuard triggers a new
 handshake every 120 seconds, which will use the last set PSK. This event is used
 to synchronize both ends of the tunnel. If an additional interval is set, the
 program delays until it has passed. The next PSK is then retrieved from the KMS
 and inserted into the tunnel. The loop then restarts.
+
+### Synchronization Protocol
+
+A synchronization protocol is used to protect against significant between the
+local instance receiving a QKD key, and the peer doing so. Synchronizing on the
+key position ensures that both sides are at the same position.
+
+Synchronization is based on simple messages transmitted over UDP. Each message
+contains a payload, a simple 4-byte integer indicating a stream position
+followed by a one byte Boolean for retransmitted messages, and a MAC over the
+payload, derived from a PSK. This PSK is simply the first key of the key stream
+shared between both peers.
+
+When a new key is retrieved from the key stream, the position of that key is
+sent to the peer. Next, a message from the peer with the same position is
+awaited on.
+
+If no message is received from the peer, the previous message is retransmitted.
+When receiving a retransmitted message, the previous message is sent in reply.
+This enables recovery from dropped messages.
+
+Note that desynchronization may still occur if messages are blocked in a single
+direction.
 
 Testing
 -------
