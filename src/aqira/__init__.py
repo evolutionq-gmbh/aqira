@@ -173,15 +173,42 @@ def main() -> None:
         help="Public key of the peer to share the PSK with",
     )
     parser.add_argument(
-        "--interval", metavar="SECONDS", required=False, type=float, default=0.0
+        "--interval",
+        metavar="SECONDS",
+        required=False,
+        type=float,
+        default=0.0,
+        help="Minimum delay between PSK updates",
     )
-    parser.add_argument("--sync_port", metavar="PORT", required=True, type=int)
-    parser.add_argument("--peer_port", metavar="PORT", required=True, type=int)
     parser.add_argument(
-        "--sync_address", metavar="ADDRESS", required=False, type=str, default=None
+        "--sync_port",
+        metavar="PORT",
+        required=True,
+        type=int,
+        help="Port to listen on for synchronization messages",
     )
     parser.add_argument(
-        "--peer_address", metavar="ADDRESS", required=False, type=str, default=None
+        "--peer_port",
+        metavar="PORT",
+        required=True,
+        type=int,
+        help="Port to send synchronization messages to",
+    )
+    parser.add_argument(
+        "--sync_address",
+        metavar="ADDRESS",
+        required=False,
+        type=str,
+        default=None,
+        help="Interface to bind to for synchronization messages",
+    )
+    parser.add_argument(
+        "--peer_address",
+        metavar="ADDRESS",
+        required=False,
+        type=str,
+        default=None,
+        help="Peer address to send synchronization messages to (derived from the WireGuard link if not specified)",
     )
 
     args = parser.parse_args()
