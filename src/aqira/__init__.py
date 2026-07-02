@@ -45,6 +45,7 @@ class QkdGuard:
         _exc_tb: TracebackType | None,
     ) -> bool | None:
         self._open = False
+        return None
 
     def run(self) -> None:
         assert self._open, "must be running"

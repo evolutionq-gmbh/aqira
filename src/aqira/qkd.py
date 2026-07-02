@@ -46,6 +46,7 @@ class QkdClient:
         _exc_tb: TracebackType | None,
     ) -> bool | None:
         self.close()
+        return None
 
     def open(self) -> None:
         try:

@@ -29,14 +29,14 @@ class Message:
     @classmethod
     def decode(cls, msg: bytes | bytearray) -> Message:
         pos = int.from_bytes(msg[:4], byteorder="little", signed=False)
-        mac = msg[4:]
+        mac = bytes(msg[4:])
         return Message(position=pos, mac=mac)
 
     def encode(self) -> bytes:
         msg = bytearray()
         msg.extend(self.position.to_bytes(4, byteorder="little", signed=False))
         msg.extend(self.mac)
-        return msg
+        return bytes(msg)
 
     def validate(self, key: PresharedKey) -> bool:
         payload = self.position.to_bytes(4, byteorder="little", signed=False)
@@ -77,8 +77,9 @@ class SyncClient:
         _exc_tb: TracebackType | None,
     ) -> bool | None:
         self.stop()
+        return None
 
-    def start(self):
+    def start(self) -> None:
         assert self._thread_comm is None, "must be stopped"
         assert self._thread is None, "must be stopped"
 
@@ -101,7 +102,7 @@ class SyncClient:
         thread_comm.close()
         thread.join()
 
-    def sync_current_position(self, position: int):
+    def sync_current_position(self, position: int) -> bool:
         assert self._thread_comm is not None, "must be started"
         assert self._peer_position_cond, "must be started"
 
@@ -117,7 +118,7 @@ class SyncClient:
             self._peer_position_cond.wait_for(check_pos)
         return self._last_peer_position != -1
 
-    def _read_message(self):
+    def _read_message(self) -> None:
         reply_data, reply_addr = self._sync_socket.recvfrom(Message.MAX_MESSAGE_SIZE)
         print(f"Received message from {reply_addr[0]}")
         if reply_addr[0] != self._peer_address[0]:
@@ -138,12 +139,12 @@ class SyncClient:
             self._last_peer_position = reply_msg.position
             self._peer_position_cond.notify_all()
 
-    def _send_message(self, position: int):
+    def _send_message(self, position: int) -> None:
         msg = Message.new(position=position, key=self._auth_psk)
         print(f"Sending message position {position} to {self._peer_address}")
         self._sync_socket.sendto(msg.encode(), self._peer_address)
 
-    def _run(self, input_sock: SocketIO):
+    def _run(self, input_sock: SocketIO) -> None:
         try:
             self._run_sync(input_sock=input_sock)
         except BaseException as e:
@@ -154,7 +155,7 @@ class SyncClient:
                 self._last_peer_position = -1
                 self._peer_position_cond.notify_all()
 
-    def _run_sync(self, input_sock: SocketIO):
+    def _run_sync(self, input_sock: SocketIO) -> None:
         current_position: int | None = None
 
         with selectors.DefaultSelector() as selector:

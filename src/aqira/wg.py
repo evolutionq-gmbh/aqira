@@ -39,9 +39,12 @@ class WgClient:
         _exc_tb: TracebackType | None,
     ) -> bool | None:
         self.close()
+        return None
 
     @property
     def public_key(self) -> bytes:
+        assert self._wg is not None, "must be connected"
+
         wg_iface = self._wg.get_interface(self._interface)
         return bytes(wg_iface.public_key)
 
