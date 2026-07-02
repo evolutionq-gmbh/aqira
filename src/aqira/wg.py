@@ -10,6 +10,9 @@ from wgnlpy.sockaddr import sockaddr_in, sockaddr_in6
 from wgnlpy.wireguardpeer import (
     WireGuardPeer,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class WgClient:
@@ -91,7 +94,7 @@ class WgClient:
             try:
                 self.set_psk(PresharedKey.generate())
             except BaseException as e:
-                print(f"Failed to invalidate PSK: {e}", file=stderr)
+                logger.error(f"Failed to invalidate PSK: {e}")
 
         wg, self._wg = self._wg, None
         # Superfluous, but WireGuard just implements __del__

@@ -1,5 +1,6 @@
 import contextlib
 import selectors
+import logging
 from socket import SHUT_WR, create_connection, socket
 from types import TracebackType
 from typing import Self
@@ -10,6 +11,8 @@ from ksnp.client import event  # pyright: ignore[reportMissingModuleSource]
 from ksnp.stream import OpenParams
 
 from wgnlpy import PresharedKey  # pyright: ignore[reportMissingTypeStubs]
+
+logger = logging.getLogger(__name__)
 
 
 class QkdClient:
@@ -124,7 +127,7 @@ class QkdClient:
                     try:
                         data = self._sock.recv(4096)
                     except Exception as e:
-                        print(f"Error on QKD connection: {e}")
+                        logger.exception("Error on QKD connection")
                         self._sock = None
                         return None
                     if len(data) == 0:
@@ -136,7 +139,7 @@ class QkdClient:
                     try:
                         count = self._sock.send(self._write_buf)
                     except Exception as e:
-                        print(f"Error on QKD connection: {e}")
+                        logger.exception("Error on QKD connection")
                         self._sock = None
                         return None
                     del self._write_buf[:count]
@@ -159,8 +162,7 @@ class QkdClient:
                     continue
                 case event.StreamAccepted(parameters=parameters):
                     if parameters.position != 0:
-                        msg = "Stream resumption is not supported"
-                        raise RuntimeError(msg)
+                        raise RuntimeError("Stream resumption is not supported")
                     self.position = parameters.position
                 case event.KeyData(key_data=key_data):
                     assert len(key_data) == self._key_size
@@ -170,4 +172,5 @@ class QkdClient:
                     return PresharedKey(key_data), position
                 case _:
                     return None
+        logger.warning("QKD connection closed")
         return None

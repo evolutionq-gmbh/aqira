@@ -6,8 +6,11 @@ from types import TracebackType
 from typing import Any, ClassVar, Self
 from wgnlpy import PresharedKey  # pyright: ignore[reportMissingTypeStubs]
 import hmac
+import logging
 import pickle
 import selectors
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -126,20 +129,26 @@ class SyncClient:
 
     def _read_message(self) -> None:
         reply_data, reply_addr = self._sync_socket.recvfrom(Message.MAX_MESSAGE_SIZE)
-        print(f"Received message from {reply_addr[0]}")
+        logger.debug(f"Received message from {reply_addr[0]}")
         if reply_addr[0] != self._peer_address[0]:
-            print(f"Reply address mismatch, {reply_addr[0]} != {self._peer_address[0]}")
+            logger.debug(
+                f"Reply address mismatch, {reply_addr[0]} != {self._peer_address[0]}"
+            )
             return
 
         reply_msg = Message.decode(reply_data)
         if not reply_msg.validate(self._auth_psk):
+            logger.debug("Message uses invalid key")
             return
 
         if self._last_peer_position is not None:
             # Ignore stale messages.
             # Ignore resends if the position is the same.
             if reply_msg.position <= self._last_peer_position:
+                logger.debug(f"Stale message with position {reply_msg.position}")
                 return
+
+        logger.debug(f"Remote at position {reply_msg.position}")
 
         with self._peer_position_cond:
             self._last_peer_position = reply_msg.position
@@ -147,14 +156,14 @@ class SyncClient:
 
     def _send_message(self, position: int) -> None:
         msg = Message.new(position=position, key=self._auth_psk)
-        print(f"Sending message position {position} to {self._peer_address}")
+        logger.debug(f"Sending message position {position} to {self._peer_address}")
         self._sync_socket.sendto(msg.encode(), self._peer_address)
 
     def _run(self, input_sock: SocketIO) -> None:
         try:
             self._run_sync(input_sock=input_sock)
-        except BaseException as e:
-            print(f"Thread exception: {type(e)}: {e}")
+        except BaseException:
+            logger.exception("Exception in sync thread")
             raise
         finally:
             with self._peer_position_cond:
@@ -181,7 +190,6 @@ class SyncClient:
                 )
                 items = selector.select(timeout=timeout)
                 if len(items) == 0:
-                    print("Timeout")
                     # Timeout. If peer is running behind, resend current
                     # position.
                     if current_position is not None:

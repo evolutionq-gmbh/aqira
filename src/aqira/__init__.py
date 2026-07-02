@@ -5,12 +5,15 @@ from types import TracebackType
 from typing import Any, ClassVar, Self
 from uuid import UUID
 import argparse
+import logging
 
 from wgnlpy import PublicKey, PresharedKey  # pyright: ignore[reportMissingTypeStubs]
 
 from .wg import WgClient
 from .qkd import QkdClient
 from .sync import SyncClient
+
+logger = logging.getLogger(__name__)
 
 
 class QkdGuard:
@@ -79,6 +82,8 @@ class QkdGuard:
             sleep(delay)
             delay = 5.0
 
+            logger.debug(f"Connecting to QKD device on {self._qkd_address}")
+
             with QkdClient(
                 self._qkd_address,
                 stream_id,
@@ -86,36 +91,38 @@ class QkdGuard:
                 WgClient.KEY_SIZE,
                 key_delay,
             ) as qkd:
-                pass
+                logger.info(f"Opened QKD stream {stream_id}")
 
-                print("Wait for auth key")
                 if (auth_psk := qkd.wait_key()) is None:
+                    logger.warning("QKD stream closed")
                     break
                 with SyncClient(
                     self._sync_socket, self._peer_address, auth_psk=auth_psk[0]
                 ) as sync:
-                    print("Wait for initial key")
+                    logger.debug("Wait for initial key")
                     if (
                         psk := qkd.wait_key()
                     ) is None or not sync.sync_current_position(
                         psk[1], timeout=self.SYNC_TIMEOUT
                     ):
-                        print("Unable to fetch and sync initial key")
+                        logger.warning("Unable to fetch and sync initial key")
                         continue
 
                     while True:
                         key_time = self._ensure_psk(psk[0])
 
                         if self._interval > (key_age := time() - key_time):
-                            print(f"Wait {self._interval - key_age} for interval")
+                            logger.debug(
+                                f"Wait {self._interval - key_age} for interval"
+                            )
                             sleep(self._interval - key_age)
 
-                        print("Wait for key")
+                        logger.debug("Wait for key")
                         psk = qkd.wait_key()
                         if psk is None or not sync.sync_current_position(
                             psk[1], timeout=self.SYNC_TIMEOUT
                         ):
-                            print("Unable to fetch and sync key")
+                            logger.warning("Unable to fetch and sync key")
                             break  # Restart QKD
 
     def _ensure_psk(self, psk: PresharedKey) -> float:
@@ -132,19 +139,21 @@ class QkdGuard:
         # Set the PSK and record when having done so.
         self._wg.set_psk(psk)
         psk_time = time()
-        print(f"PSK set at {psk_time}")
+        logger.info(f"PSK set at {psk_time}")
 
         # Wait for the handshake that uses the PSK.
         if (handshake_time := self._wg.handshake_time) < psk_time:
             handshake_age = time() - handshake_time
             if handshake_age < WgClient.REKEY_DELAY:
-                print(f"Wait {WgClient.REKEY_DELAY - handshake_age} for next handshake")
+                logger.debug(
+                    f"Wait {WgClient.REKEY_DELAY - handshake_age} for next handshake"
+                )
                 sleep(WgClient.REKEY_DELAY - handshake_age)
+
             # If there is a PSK mismatch, or the network is down,
             # recheck the handshake time every REKEY_TIMEOUT seconds.
             # This allows a remote to catch up.
             while (handshake_time := self._wg.handshake_time) < psk_time:
-                print(".", end=None)
                 sleep(WgClient.REKEY_TIMEOUT)
 
         # At this point a handshake occurred that appeared after setting
@@ -152,7 +161,7 @@ class QkdGuard:
         # PSK slightly too late, the previous PSK is being used, the
         # current PSK will be used on the next handshake (or the next
         # PSK, if the PSK rolled).
-        print(f"PSK assumed enabled at {handshake_time}")
+        logger.debug(f"PSK assumed enabled at {handshake_time}")
 
         return handshake_time
 
@@ -223,8 +232,30 @@ def main() -> None:
         default=None,
         help="Peer address to send synchronization messages to (derived from the WireGuard link if not specified)",
     )
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Disable normal log output",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable debug log output",
+    )
 
     args = parser.parse_args()
+
+    if args.verbose:
+        level = logging.DEBUG
+    elif args.quiet:
+        level = logging.ERROR
+    else:
+        level = logging.INFO
+
+    logging.basicConfig(level=level)
+    logging.getLogger("pyroute2.netlink").setLevel(logging.ERROR)
 
     if args.interval % WgClient.REKEY_DELAY != 0:
         print(
