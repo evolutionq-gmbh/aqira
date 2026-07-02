@@ -2,7 +2,7 @@ from hashlib import blake2s
 from socket import AddressFamily, SocketKind, socket, getaddrinfo, IPPROTO_UDP
 from time import sleep, time
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, ClassVar, Self
 from uuid import UUID
 import argparse
 
@@ -14,6 +14,14 @@ from .sync import SyncClient
 
 
 class QkdGuard:
+    SYNC_TIMEOUT: ClassVar[float | None] = 30.0
+    """
+    Time to allow for stream synchronization.
+
+    If the key can not be synchronized within this timeout, the key
+    stream is restarted.
+    """
+
     def __init__(
         self,
         qkd_address: tuple[str, int],
@@ -89,7 +97,9 @@ class QkdGuard:
                     print("Wait for initial key")
                     if (
                         psk := qkd.wait_key()
-                    ) is None or not sync.sync_current_position(psk[1]):
+                    ) is None or not sync.sync_current_position(
+                        psk[1], timeout=self.SYNC_TIMEOUT
+                    ):
                         print("Unable to fetch and sync initial key")
                         continue
 
@@ -102,9 +112,11 @@ class QkdGuard:
 
                         print("Wait for key")
                         psk = qkd.wait_key()
-                        if psk is None or not sync.sync_current_position(psk[1]):
+                        if psk is None or not sync.sync_current_position(
+                            psk[1], timeout=self.SYNC_TIMEOUT
+                        ):
                             print("Unable to fetch and sync key")
-                            return
+                            break  # Restart QKD
 
     def _ensure_psk(self, psk: PresharedKey) -> float:
         """

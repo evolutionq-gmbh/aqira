@@ -102,7 +102,9 @@ class SyncClient:
         thread_comm.close()
         thread.join()
 
-    def sync_current_position(self, position: int) -> bool:
+    def sync_current_position(
+        self, position: int, timeout: float | None = None
+    ) -> bool | None:
         assert self._thread_comm is not None, "must be started"
         assert self._peer_position_cond, "must be started"
 
@@ -115,8 +117,12 @@ class SyncClient:
             )
 
         with self._peer_position_cond:
-            self._peer_position_cond.wait_for(check_pos)
-        return self._last_peer_position != -1
+            result = self._peer_position_cond.wait_for(check_pos, timeout=timeout)
+
+        if self._last_peer_position == -1:
+            return None
+        else:
+            return result
 
     def _read_message(self) -> None:
         reply_data, reply_addr = self._sync_socket.recvfrom(Message.MAX_MESSAGE_SIZE)
