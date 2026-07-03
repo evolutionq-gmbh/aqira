@@ -17,7 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 class QkdGuard:
-    SYNC_TIMEOUT: ClassVar[float | None] = 30.0
+    PSK_RETRIES: ClassVar[int] = 5
+    """
+    Number of attempts retries the handshake is allowed to make before
+    the PSK is considered bad.
+
+    After setting the PSK, the handshake should occur within ``retries *
+    WgClient.REKEY_TIMEOUT`` seconds. Otherwise, the PSK is assumed not
+    to work (due to the peer not having the same PSK), and the QKD
+    stream is restarted, resetting the PSK.
+    """
+
+    SYNC_TIMEOUT: ClassVar[float | None] = PSK_RETRIES * WgClient.REKEY_TIMEOUT
     """
     Time to allow for stream synchronization.
 
@@ -40,9 +51,8 @@ class QkdGuard:
         self._sync_socket = sync_socket
         self._peer_address = peer_address
         self._wg = wg
-
+        self._initial_psk = wg.peer_psk
         self._interval = interval
-        self._key_delay = self._interval + (120.0 - self._interval % 120.0)
         self._open = False
 
     def __enter__(self) -> Self:
@@ -55,6 +65,7 @@ class QkdGuard:
         _exc_val: BaseException | None,
         _exc_tb: TracebackType | None,
     ) -> bool | None:
+        self._wg.set_psk(self._initial_psk)
         self._open = False
         return None
 
@@ -76,11 +87,16 @@ class QkdGuard:
             ).digest()
         )
 
-        delay = 0.0
+        restart = False
         while True:
-            # Restart after delay, delay only after the first iteration.
-            sleep(delay)
-            delay = 5.0
+            if restart:
+                # Revert to the initial PSK when restarting, pending a
+                # proper QKD link.
+                self._wg.set_psk(self._initial_psk)
+                # Restart after delay.
+                sleep(5.0)
+            else:
+                restart = True
 
             logger.debug(f"Connecting to QKD device on {self._qkd_address}")
 
@@ -109,7 +125,9 @@ class QkdGuard:
                         continue
 
                     while True:
-                        key_time = self._ensure_psk(psk[0])
+                        if (key_time := self._ensure_psk(psk[0])) is None:
+                            logger.error("Failed to set the PSK, restarting")
+                            break
 
                         if self._interval > (key_age := time() - key_time):
                             logger.debug(
@@ -125,7 +143,7 @@ class QkdGuard:
                             logger.warning("Unable to fetch and sync key")
                             break  # Restart QKD
 
-    def _ensure_psk(self, psk: PresharedKey) -> float:
+    def _ensure_psk(self, psk: PresharedKey) -> float | None:
         """
         Set the PSk to the given key, and wait for the first handshake
         that makes use of it.
@@ -153,8 +171,14 @@ class QkdGuard:
             # If there is a PSK mismatch, or the network is down,
             # recheck the handshake time every REKEY_TIMEOUT seconds.
             # This allows a remote to catch up.
-            while (handshake_time := self._wg.handshake_time) < psk_time:
+            retries = self.PSK_RETRIES
+            while (
+                handshake_time := self._wg.handshake_time
+            ) < psk_time and retries > 0:
                 sleep(WgClient.REKEY_TIMEOUT)
+                retries -= 1
+            if retries == 0:
+                return None
 
         # At this point a handshake occurred that appeared after setting
         # the PSK. Most likely, the PSK is in use. If both sides set the

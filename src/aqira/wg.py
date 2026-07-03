@@ -1,4 +1,3 @@
-from sys import stderr
 from types import TracebackType
 from typing import ClassVar, Self, cast
 from wgnlpy import (
@@ -18,7 +17,15 @@ logger = logging.getLogger(__name__)
 class WgClient:
     KEY_SIZE: ClassVar[int] = 32
     REKEY_DELAY: ClassVar[float] = 120.0
+    """
+    The time after which WireGuard initiates a new handshake.
+    """
+
     REKEY_TIMEOUT: ClassVar[float] = 5.0
+    """
+    The time after which WireGuard retries a handshake if it did not
+    succeed.
+    """
 
     def __init__(
         self,
@@ -28,8 +35,6 @@ class WgClient:
         self._interface = interface
         self._peer_key = peer_key
         self._wg: WireGuard | None = None
-
-        self.disable_on_close = False
 
     def __enter__(self) -> Self:
         self.open()
@@ -65,11 +70,17 @@ class WgClient:
         peer = self._peer()
         return peer.endpoint
 
-    def _peer(self) -> WireGuardPeer:
+    @property
+    def peer_psk(self) -> PresharedKey:
+        return self._peer(spill_preshared_keys=True).preshared_key
+
+    def _peer(self, spill_preshared_keys: bool = False) -> WireGuardPeer:
         assert self._wg is not None, "must be connected"
         peer = cast(
             "WireGuardPeer | None",
-            self._wg.get_interface(self._interface).peers.get(self._peer_key, None),
+            self._wg.get_interface(
+                self._interface, spill_preshared_keys=spill_preshared_keys
+            ).peers.get(self._peer_key, None),
         )
         if peer is None:
             msg = f"peer {self._peer_key} is no longer configured for interface {self._interface}"
@@ -87,14 +98,6 @@ class WgClient:
 
     def close(self) -> None:
         assert self._wg is not None, "must be connected"
-
-        # Invalidating the PSK will render the link unusable on the next
-        # handshake.
-        if self.disable_on_close:
-            try:
-                self.set_psk(PresharedKey.generate())
-            except BaseException as e:
-                logger.error(f"Failed to invalidate PSK: {e}")
 
         wg, self._wg = self._wg, None
         # Superfluous, but WireGuard just implements __del__
