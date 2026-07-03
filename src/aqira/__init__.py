@@ -105,48 +105,50 @@ class QkdGuard:
 
             logger.debug(f"Connecting to QKD device on {self._qkd_address}")
 
-            with QkdClient(
-                self._qkd_address,
-                stream_id,
-                str(self._wg.peer_key),
-                WgClient.KEY_SIZE,
-                key_delay,
-            ) as qkd:
-                logger.info(f"Opened QKD stream {stream_id}")
+            try:
+                with QkdClient(
+                    self._qkd_address,
+                    stream_id,
+                    str(self._wg.peer_key),
+                    WgClient.KEY_SIZE,
+                    key_delay,
+                ) as qkd:
+                    logger.info(f"Opened QKD stream {stream_id}")
+                    self._update_psk_loop(qkd)
+            except Exception:
+                logger.exception("Error in PSK loop")
+                logger.info("Restarting PSK loop")
 
-                if (auth_psk := qkd.wait_key()) is None:
-                    logger.warning("QKD stream closed")
-                    continue
-                with SyncClient(
-                    self._sync_socket, self._peer_address, auth_psk=auth_psk[0]
-                ) as sync:
-                    logger.debug("Wait for initial key")
-                    if (
-                        psk := qkd.wait_key()
-                    ) is None or not sync.sync_current_position(
-                        psk[1], timeout=self.SYNC_TIMEOUT
-                    ):
-                        logger.warning("Unable to fetch and sync initial key")
-                        continue
+    def _update_psk_loop(self, qkd: QkdClient) -> None:
+        if (auth_psk := qkd.wait_key()) is None:
+            logger.warning("QKD stream closed")
+            return
+        with SyncClient(
+            self._sync_socket, self._peer_address, auth_psk=auth_psk[0]
+        ) as sync:
+            logger.debug("Wait for initial key")
+            if (psk := qkd.wait_key()) is None or not sync.sync_current_position(
+                psk[1], timeout=self.SYNC_TIMEOUT
+            ):
+                logger.warning("Unable to fetch and sync initial key")
+                return
 
-                    while True:
-                        if (key_time := self._ensure_psk(psk[0])) is None:
-                            logger.error("Failed to set the PSK, restarting")
-                            break
+            while True:
+                if (key_time := self._ensure_psk(psk[0])) is None:
+                    logger.error("Failed to set the PSK, restarting")
+                    break
 
-                        if self._interval > (key_age := time() - key_time):
-                            logger.debug(
-                                f"Wait {self._interval - key_age} for interval"
-                            )
-                            sleep(self._interval - key_age)
+                if self._interval > (key_age := time() - key_time):
+                    logger.debug(f"Wait {self._interval - key_age} for interval")
+                    sleep(self._interval - key_age)
 
-                        logger.debug("Wait for key")
-                        psk = qkd.wait_key()
-                        if psk is None or not sync.sync_current_position(
-                            psk[1], timeout=self.SYNC_TIMEOUT
-                        ):
-                            logger.warning("Unable to fetch and sync key")
-                            break  # Restart QKD
+                logger.debug("Wait for key")
+                psk = qkd.wait_key()
+                if psk is None or not sync.sync_current_position(
+                    psk[1], timeout=self.SYNC_TIMEOUT
+                ):
+                    logger.warning("Unable to fetch and sync key")
+                    break
 
     def _ensure_psk(self, psk: PresharedKey) -> float | None:
         """
