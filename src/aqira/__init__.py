@@ -72,7 +72,11 @@ class QkdGuard:
     def run(self) -> None:
         assert self._open, "must be running"
 
-        key_delay = self._interval + (120.0 - self._interval % 120.0)
+        # Round the interval up to the nearest multiple of the
+        # REKEY_DELAY.
+        key_delay = self._interval + (
+            WgClient.REKEY_DELAY - self._interval % WgClient.REKEY_DELAY
+        )
         stream_id = UUID(
             bytes=blake2s(
                 bytes(
@@ -93,8 +97,9 @@ class QkdGuard:
                 # Revert to the initial PSK when restarting, pending a
                 # proper QKD link.
                 self._wg.set_psk(self._initial_psk)
-                # Restart after delay.
-                sleep(5.0)
+                # Restart after delay. The handshake timeout seems to
+                # fit well enough.
+                sleep(WgClient.REKEY_TIMEOUT)
             else:
                 restart = True
 
