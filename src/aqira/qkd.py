@@ -1,6 +1,8 @@
 import contextlib
-import selectors
 import logging
+import selectors
+import ssl
+from pathlib import Path
 from socket import SHUT_WR, create_connection, socket
 from types import TracebackType
 from typing import Self
@@ -19,12 +21,14 @@ class QkdClient:
     def __init__(
         self,
         qkd_address: tuple[str, int],
+        qkd_tls_params: tuple[Path | None, Path | None, Path | None],
         stream_id: UUID,
         destination: str,
         key_size: int,
         key_delay: float,
     ) -> None:
         self._qkd_address = qkd_address
+        self._qkd_tls_params = qkd_tls_params
         self._stream_id = stream_id
         self._destination = destination
         self._key_size = key_size
@@ -54,11 +58,29 @@ class QkdClient:
     def open(self) -> None:
         try:
             self._sock = create_connection(self._qkd_address)
-            self._sock.setblocking(False)
             self._selector = selectors.DefaultSelector()
             self._selector.register(
                 self._sock, selectors.EVENT_READ | selectors.EVENT_WRITE
             )
+
+            if self._qkd_tls_params[0] is not None:
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                context.load_verify_locations(
+                    cafile=self._qkd_tls_params[0],
+                )
+                if self._qkd_tls_params[1] and self._qkd_tls_params[2]:
+                    context.load_cert_chain(
+                        certfile=self._qkd_tls_params[1],
+                        keyfile=self._qkd_tls_params[2],
+                    )
+
+                self._sock = context.wrap_socket(
+                    self._sock,
+                    server_hostname=self._qkd_address[0],
+                    do_handshake_on_connect=False,
+                )
+                self._sock.do_handshake(block=True)
+                self._sock.setblocking(False)
 
             self._open_stream()
         except:

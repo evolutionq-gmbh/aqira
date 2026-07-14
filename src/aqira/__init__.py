@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 from hashlib import blake2s
+from pathlib import Path
 from socket import AddressFamily, SocketKind, socket, getaddrinfo, IPPROTO_UDP
 from time import sleep, time
 from types import TracebackType
@@ -40,6 +41,7 @@ class QkdGuard:
     def __init__(
         self,
         qkd_address: tuple[str, int],
+        qkd_tls_params: tuple[Path | None, Path | None, Path | None],
         sync_socket: socket | None,
         wg: WgClient,
         peer_address: tuple[Any, ...] | None,
@@ -49,6 +51,7 @@ class QkdGuard:
             raise ValueError
 
         self._qkd_address = qkd_address
+        self._qkd_tls_params = qkd_tls_params
         self._sync_socket = sync_socket
         self._peer_address = peer_address
         self._wg = wg
@@ -109,6 +112,7 @@ class QkdGuard:
             try:
                 with QkdClient(
                     self._qkd_address,
+                    self._qkd_tls_params,
                     stream_id,
                     str(self._wg.peer_key),
                     WgClient.KEY_SIZE,
@@ -220,6 +224,26 @@ def main() -> None:
         required=True,
         type=int,
         help="Port of the QKD interface to retrieve keys from",
+    )
+    parser.add_argument(
+        "--ca",
+        metavar="PEM_FILE",
+        type=Path,
+        help="Path to the root store for certificate verification",
+    )
+    parser.add_argument(
+        "--certificate",
+        "-c",
+        metavar="PEM_FILE",
+        type=Path,
+        help="Path to the client certificate",
+    )
+    parser.add_argument(
+        "--key",
+        "-k",
+        metavar="PEM_FILE",
+        type=Path,
+        help="Path to the client private key",
     )
     parser.add_argument(
         "--interface",
@@ -339,6 +363,7 @@ def main() -> None:
 
             with QkdGuard(
                 (args.host, args.port),
+                (args.ca, args.certificate, args.key),
                 sync_socket,
                 wg,
                 peer_address[2] if peer_address is not None else None,
