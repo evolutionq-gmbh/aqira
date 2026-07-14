@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from hashlib import blake2s
 from socket import AddressFamily, SocketKind, socket, getaddrinfo, IPPROTO_UDP
 from time import sleep, time
@@ -39,9 +40,9 @@ class QkdGuard:
     def __init__(
         self,
         qkd_address: tuple[str, int],
-        sync_socket: socket,
+        sync_socket: socket | None,
         wg: WgClient,
-        peer_address: tuple[Any, ...],
+        peer_address: tuple[Any, ...] | None,
         interval: float = 0.0,
     ) -> None:
         if interval < 0.0:
@@ -123,12 +124,17 @@ class QkdGuard:
         if (auth_psk := qkd.wait_key()) is None:
             logger.warning("QKD stream closed")
             return
-        with SyncClient(
-            self._sync_socket, self._peer_address, auth_psk=auth_psk[0]
-        ) as sync:
+        if self._sync_socket is not None and self._peer_address is not None:
+            sync_ctx = SyncClient(
+                self._sync_socket, self._peer_address, auth_psk=auth_psk[0]
+            )
+        else:
+            sync_ctx = nullcontext()
+        with sync_ctx as sync:
             logger.debug("Wait for initial key")
-            if (psk := qkd.wait_key()) is None or not sync.sync_current_position(
-                psk[1], timeout=self.SYNC_TIMEOUT
+            if (psk := qkd.wait_key()) is None or (
+                sync
+                and not sync.sync_current_position(psk[1], timeout=self.SYNC_TIMEOUT)
             ):
                 logger.warning("Unable to fetch and sync initial key")
                 return
@@ -144,8 +150,11 @@ class QkdGuard:
 
                 logger.debug("Wait for key")
                 psk = qkd.wait_key()
-                if psk is None or not sync.sync_current_position(
-                    psk[1], timeout=self.SYNC_TIMEOUT
+                if psk is None or (
+                    sync
+                    and not sync.sync_current_position(
+                        psk[1], timeout=self.SYNC_TIMEOUT
+                    )
                 ):
                     logger.warning("Unable to fetch and sync key")
                     break
@@ -236,14 +245,14 @@ def main() -> None:
     parser.add_argument(
         "--sync_port",
         metavar="PORT",
-        required=True,
+        required=False,
         type=int,
         help="Port to listen on for synchronization messages",
     )
     parser.add_argument(
         "--peer_port",
         metavar="PORT",
-        required=True,
+        required=False,
         type=int,
         help="Port to send synchronization messages to",
     )
@@ -294,36 +303,45 @@ def main() -> None:
         )
 
     with WgClient(interface=args.interface, peer_key=args.peer_key) as wg:
-        peer_address: tuple[AddressFamily, SocketKind, tuple[Any, ...]]
-        if args.peer_address is None:
-            addr = wg.peer_address.addr
-            peer_address = (
-                AddressFamily(wg.peer_address.family),
-                SocketKind.SOCK_DGRAM,
-                (str(addr), args.peer_port),
-            )
-        else:
-            for gai_addr in getaddrinfo(
-                args.peer_address,
-                args.peer_port,
-                type=SocketKind.SOCK_DGRAM,
-                proto=IPPROTO_UDP,
-            ):
-                peer_address = (gai_addr[0], gai_addr[1], gai_addr[4])
-                break
-            else:
-                raise RuntimeError(
-                    f"Unable to resolve peer address {args.peer_address}"
+        peer_address: tuple[AddressFamily, SocketKind, tuple[Any, ...]] | None
+        if args.peer_port is not None and args.sync_port is not None:
+            if args.peer_address is None:
+                addr = wg.peer_address.addr
+                peer_address = (
+                    AddressFamily(wg.peer_address.family),
+                    SocketKind.SOCK_DGRAM,
+                    (str(addr), args.peer_port),
                 )
+            else:
+                for gai_addr in getaddrinfo(
+                    args.peer_address,
+                    args.peer_port,
+                    type=SocketKind.SOCK_DGRAM,
+                    proto=IPPROTO_UDP,
+                ):
+                    peer_address = (gai_addr[0], gai_addr[1], gai_addr[4])
+                    break
+                else:
+                    raise RuntimeError(
+                        f"Unable to resolve peer address {args.peer_address}"
+                    )
+        else:
+            peer_address = None
 
-        with socket(family=peer_address[0], type=peer_address[1]) as sync_socket:
-            sync_socket.bind((args.sync_address or "", args.sync_port))
+        if peer_address is not None:
+            sync_socket_ctx = socket(family=peer_address[0], type=peer_address[1])
+        else:
+            sync_socket_ctx = nullcontext()
+
+        with sync_socket_ctx as sync_socket:
+            if sync_socket is not None:
+                sync_socket.bind((args.sync_address or "", args.sync_port))
 
             with QkdGuard(
                 (args.host, args.port),
                 sync_socket,
                 wg,
-                peer_address[2],
+                peer_address[2] if peer_address is not None else None,
                 args.interval,
             ) as client:
                 client.run()

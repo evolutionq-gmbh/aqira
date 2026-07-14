@@ -10,9 +10,9 @@ a tunnel to enable QKD hardening.
 
 A connection with a KMS is established to read QKD key data in a streaming
 fashion. At a fixed (but configurable) interval, this key data is inserted into
-the WIreGuard tunnel as a PSK. The KMS ensures the QKD stream remains
+the WireGuard tunnel as a PSK. The KMS ensures the QKD stream remains
 synchronized, allowing this utility to operate in an entirely standalone
-fashion.
+fashion, however it is recommended to enable stream synchronization.
 
 Usage
 -----
@@ -33,13 +33,17 @@ reachable. The `interface` is the name of the WireGuard tunnel, and the
 `peer_key` the peer to configure the PSK for.
 
 Optionally, the `--interval` option can be used to specify an additional
-interval by which to retrieve PSK keys.
+interval by which to retrieve PSK keys. This interval is rounded up to the
+nearest WireGuard handshake interval, and enables a PSK to be used for more than
+one handshake.
 
 The `sync_port` and `peer_port` are the respectively the port to listen on for
 synchronization messages and the port to send them to. An optional
-`peer_address` specifies the address at which the peer is reachable. If not
-specified, the endpoint configured for the WireGuard interface is used. The
-optional `sync_address` specified the address to bind the listening socket on.
+`peer_address` specifies the address at which the peer is reachable. If this
+address is not specified, the endpoint configured for the WireGuard interface is
+used. The optional `sync_address` specified the address to bind the listening
+socket on. If the `sync_port` or `peer_port` argument is not provided, no
+synchronization is performed. This enables stand-alone mode.
 
 Note that the program must be run as root, or with CAP_NET_ADMIN privileges.
 
