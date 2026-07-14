@@ -42,6 +42,7 @@ class QkdGuard:
         self,
         qkd_address: tuple[str, int],
         qkd_tls_params: tuple[Path | None, Path | None, Path | None],
+        qkd_destination: str | None,
         sync_socket: socket | None,
         wg: WgClient,
         peer_address: tuple[Any, ...] | None,
@@ -52,6 +53,7 @@ class QkdGuard:
 
         self._qkd_address = qkd_address
         self._qkd_tls_params = qkd_tls_params
+        self._qkd_destination = qkd_destination
         self._sync_socket = sync_socket
         self._peer_address = peer_address
         self._wg = wg
@@ -114,7 +116,9 @@ class QkdGuard:
                     self._qkd_address,
                     self._qkd_tls_params,
                     stream_id,
-                    str(self._wg.peer_key),
+                    self._qkd_destination
+                    if self._qkd_destination
+                    else str(self._wg.peer_key),
                     WgClient.KEY_SIZE,
                     key_delay,
                 ) as qkd:
@@ -246,6 +250,13 @@ def main() -> None:
         help="Path to the client private key",
     )
     parser.add_argument(
+        "--destination",
+        "-d",
+        metavar="SAE",
+        type=str,
+        help="SAE of the stream destination",
+    )
+    parser.add_argument(
         "--interface",
         metavar="IFACE",
         required=True,
@@ -364,6 +375,7 @@ def main() -> None:
             with QkdGuard(
                 (args.host, args.port),
                 (args.ca, args.certificate, args.key),
+                args.destination,
                 sync_socket,
                 wg,
                 peer_address[2] if peer_address is not None else None,

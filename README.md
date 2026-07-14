@@ -49,6 +49,10 @@ TLS can be enabled by specifying the `--ca` argument with a path to the CA root
 store. To enable client authentication, also specify `--certificate` and `--key`
 with the paths to the certificate and private key files respectively.
 
+By default the destination for the QKD key stream is assumed to be the WireGuard
+peer public key. To override this, specify a `--destination` argument with the
+SAE ID to use.
+
 Note that the program must be run as root, or with CAP_NET_ADMIN privileges.
 
 Operation
