@@ -1,42 +1,53 @@
+import hmac
+import logging
+import pickle
+import selectors
 from dataclasses import dataclass
 from hashlib import blake2s
 from socket import SocketIO, socket, socketpair
 from threading import Condition, Thread
 from types import TracebackType
 from typing import Any, ClassVar, Self
+
 from wgnlpy import PresharedKey  # pyright: ignore[reportMissingTypeStubs]
-import hmac
-import logging
-import pickle
-import selectors
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class Message:
-    MAX_MESSAGE_SIZE: ClassVar[int] = 4 + 1 + blake2s.MAX_DIGEST_SIZE
-
+class SyncParams:
     position: int
+    key_hash: bytes  # blake2s.MAX_DIGEST_SIZE = 32-bytes
+
+
+@dataclass
+class Message:
+    MAX_MESSAGE_SIZE: ClassVar[int] = (
+        4 + blake2s.MAX_DIGEST_SIZE + 1 + blake2s.MAX_DIGEST_SIZE
+    )
+
+    params: SyncParams
     retry: bool
     mac: bytes
 
     @classmethod
-    def new(cls, position: int, retry: bool, key: PresharedKey) -> Message:
+    def new(cls, params: SyncParams, retry: bool, auth_key: PresharedKey) -> Message:
         msg = Message(
-            position=position,
+            params=params,
             retry=retry,
-            mac=bytes(),
+            mac=b"",
         )
-        msg.mac = hmac.digest(bytes(key), msg._payload(), digest=blake2s)
+        msg.mac = hmac.digest(bytes(auth_key), msg._payload(), digest=blake2s)
         return msg
 
     @classmethod
     def decode(cls, msg: bytes | bytearray) -> Message:
         position = int.from_bytes(msg[:4], byteorder="little", signed=False)
-        retry = bool.from_bytes(msg[4:5])
-        mac = bytes(msg[5:])
-        return Message(position=position, retry=retry, mac=mac)
+        key_hash = bytes(msg[4:][: blake2s.MAX_DIGEST_SIZE])
+        params = SyncParams(position=position, key_hash=key_hash)
+        retry = bool.from_bytes(msg[4 + blake2s.MAX_DIGEST_SIZE :][:1])
+        mac = bytes(msg[4 + blake2s.MAX_DIGEST_SIZE + 1 :])
+        return Message(params=params, retry=retry, mac=mac)
 
     def encode(self) -> bytes:
         msg = self._payload()
@@ -45,7 +56,8 @@ class Message:
 
     def _payload(self) -> bytearray:
         msg = bytearray()
-        msg.extend(self.position.to_bytes(4, byteorder="little", signed=False))
+        msg.extend(self.params.position.to_bytes(4, byteorder="little", signed=False))
+        msg.extend(self.params.key_hash)
         msg.extend(self.retry.to_bytes(1))
         return msg
 
@@ -60,6 +72,15 @@ class SyncClient:
     position.
     """
 
+    @dataclass
+    class _ThreadHandle:
+        thread: Thread
+        thread_comm: SocketIO
+
+        def close(self) -> None:
+            self.thread_comm.close()
+            self.thread.join()
+
     def __init__(
         self,
         sync_socket: socket,
@@ -73,8 +94,7 @@ class SyncClient:
         self._sock: socket | None = None
         self._last_peer_position: int | None = None
         self._peer_position_cond = Condition()
-        self._thread: Thread | None = None
-        self._thread_comm: SocketIO | None = None
+        self._thread: SyncClient._ThreadHandle | None = None
 
     def __enter__(self) -> Self:
         self.start()
@@ -86,44 +106,44 @@ class SyncClient:
         _exc_val: BaseException | None,
         _exc_tb: TracebackType | None,
     ) -> bool | None:
-        self.stop()
+        if self._thread is not None:
+            self.stop()
         return None
 
     def start(self) -> None:
-        assert self._thread_comm is None, "must be stopped"
         assert self._thread is None, "must be stopped"
 
         comm_r, comm_w = socketpair()
-        thread = Thread(
-            target=self._run,
-            args=(comm_r.makefile("rb", buffering=0),),
-        )
-        thread.start()
-        self._thread = thread
-        self._thread_comm = comm_w.makefile("wb", buffering=0)
+        with comm_r, comm_w:
+            thread = Thread(
+                target=self._run,
+                args=(comm_r.makefile("rb", buffering=0),),
+            )
+            thread.start()
+            self._thread = SyncClient._ThreadHandle(
+                thread, comm_w.makefile("wb", buffering=0)
+            )
 
     def stop(self) -> None:
-        assert self._thread_comm is not None, "must be started"
         assert self._thread is not None, "must be started"
 
-        thread_comm, self._thread_comm = self._thread_comm, None
-        thread, self._thread = self._thread, None
-
-        thread_comm.close()
-        thread.join()
+        try:
+            self._thread.close()
+        finally:
+            self._thread = None
 
     def sync_current_position(
-        self, position: int, timeout: float | None = None
+        self, params: SyncParams, timeout: float | None = None
     ) -> bool | None:
-        assert self._thread_comm is not None, "must be started"
-        assert self._peer_position_cond, "must be started"
+        assert self._thread is not None, "must be started"
 
-        pickle.dump(obj=position, file=self._thread_comm)
-        self._thread_comm.flush()
+        pickle.dump(obj=params, file=self._thread.thread_comm)
+        self._thread.thread_comm.flush()
 
         def check_pos() -> bool:
             return self._last_peer_position is not None and (
-                self._last_peer_position == position or self._last_peer_position == -1
+                self._last_peer_position == params.position
+                or self._last_peer_position == -1
             )
 
         with self._peer_position_cond:
@@ -144,6 +164,7 @@ class SyncClient:
             return False
 
         reply_msg = Message.decode(reply_data)
+        logger.debug(f"Received message {reply_msg}")
         if not reply_msg.validate(self._auth_psk):
             logger.debug("Message uses invalid key")
             return False
@@ -151,24 +172,24 @@ class SyncClient:
         if reply_msg.retry:
             return True
 
-        if self._last_peer_position is not None:
+        if self._last_peer_position is not None:  # noqa: SIM102
             # Ignore stale messages.
             # Ignore resends if the position is the same.
-            if reply_msg.position <= self._last_peer_position:
-                logger.debug(f"Stale message with position {reply_msg.position}")
+            if reply_msg.params.position <= self._last_peer_position:
+                logger.debug("Stale message")
                 return False
 
-        logger.debug(f"Remote at position {reply_msg.position}")
+        logger.debug("Accepted message")
 
         with self._peer_position_cond:
-            self._last_peer_position = reply_msg.position
+            self._last_peer_position = reply_msg.params.position
             self._peer_position_cond.notify_all()
 
         return False
 
-    def _send_message(self, position: int, retry: bool) -> None:
-        msg = Message.new(position=position, retry=retry, key=self._auth_psk)
-        logger.debug(f"Sending message position {position} to {self._peer_address}")
+    def _send_message(self, params: SyncParams, retry: bool) -> None:
+        msg = Message.new(params=params, retry=retry, auth_key=self._auth_psk)
+        logger.debug(f"Sending message {msg} to {self._peer_address}")
         self._sync_socket.sendto(msg.encode(), self._peer_address)
 
     def _run(self, input_sock: SocketIO) -> None:
@@ -183,7 +204,7 @@ class SyncClient:
                 self._peer_position_cond.notify_all()
 
     def _run_sync(self, input_sock: SocketIO) -> None:
-        current_position: int | None = None
+        current_params: SyncParams | None = None
 
         with selectors.DefaultSelector() as selector:
             selector.register(self._sync_socket, selectors.EVENT_READ)
@@ -193,10 +214,10 @@ class SyncClient:
                 # Resend if the peer is behind
                 timeout = (
                     self.PEER_RESEND_DELAY
-                    if current_position is not None
+                    if current_params is not None
                     and (
                         self._last_peer_position is None
-                        or current_position > self._last_peer_position
+                        or current_params.position > self._last_peer_position
                     )
                     else None
                 )
@@ -204,21 +225,23 @@ class SyncClient:
                 if len(items) == 0:
                     # Timeout. If peer is running behind, resend current
                     # position.
-                    if current_position is not None:
-                        self._send_message(position=current_position, retry=True)
+                    if current_params is not None:
+                        self._send_message(params=current_params, retry=True)
                     continue
                 for key, _ in items:
                     if key.fileobj is input_sock:
                         try:
                             position = pickle.load(input_sock)
-                            assert type(position) is int, "position is int"
+                            assert isinstance(position, SyncParams), (
+                                "position is MessageParams"
+                            )
                         except EOFError:
                             # Connection closed, stop thread
                             return
-                        current_position = position
-                        assert current_position is not None
-                        self._send_message(position=current_position, retry=False)
+                        current_params = position
+                        assert current_params is not None
+                        self._send_message(params=current_params, retry=False)
 
-                    if key.fileobj is self._sync_socket:
-                        if self._read_message() and current_position is not None:
-                            self._send_message(current_position, False)
+                    if key.fileobj is self._sync_socket:  # noqa: SIM102
+                        if self._read_message() and current_params is not None:
+                            self._send_message(params=current_params, retry=False)

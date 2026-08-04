@@ -11,7 +11,6 @@ from uuid import UUID
 from ksnp import CloseDirection, client  # pyright: ignore[reportMissingModuleSource]
 from ksnp.client import event  # pyright: ignore[reportMissingModuleSource]
 from ksnp.stream import OpenParams
-
 from wgnlpy import PresharedKey  # pyright: ignore[reportMissingTypeStubs]
 
 logger = logging.getLogger(__name__)
@@ -150,7 +149,7 @@ class QkdClient:
                 if mask & selectors.EVENT_READ:
                     try:
                         data = self._sock.recv(4096)
-                    except IOError:
+                    except OSError:
                         logger.exception("Error on QKD connection")
                         self._sock = None
                         return None
@@ -162,7 +161,7 @@ class QkdClient:
                 if mask & selectors.EVENT_WRITE:
                     try:
                         count = self._sock.send(self._write_buf)
-                    except IOError:
+                    except OSError:
                         logger.exception("Error on QKD connection")
                         self._sock = None
                         return None

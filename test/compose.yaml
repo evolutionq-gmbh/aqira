@@ -58,9 +58,12 @@ services:
       - NET_ADMIN
     expose:
       - "51821/udp"
+    volumes:
+      - ./rp_alice:/storage
     command: ["--host=qkd_alice", "--port=5000",
               "--interface=wg0", "--peer_key=31ZNbQz4cz3W8YBgAwePW4CVqQRiq+ArfAQ3tIlamyg=",
               "--sync_port=51821", "--peer_port=51821",
+              "--pqc=/storage/rp_out",
               "-v"]
 
   aqira_bob:
@@ -74,10 +77,44 @@ services:
       - NET_ADMIN
     expose:
       - "51821/udp"
+    volumes:
+      - ./rp_bob:/storage
     command: ["--host=qkd_bob", "--port=5000",
               "--interface=wg0", "--peer_key=zQRal+p7AezmKGqLPB7NcxhdK5nhtMXGHZIh4PqeQRY=",
               "--sync_port=51821", "--peer_port=51821",
+              "--pqc=/storage/rp_out",
               "-v"]
+
+  rp_alice:
+    image: ghcr.io/rosenpass/rosenpass:edge
+    init: true
+    expose:
+      - "9999/udp"
+    volumes:
+      - ./alice:/conf:ro
+      - ./rp_alice:/storage
+    command: [
+              "exchange",
+              "listen", "0.0.0.0:9999",
+              "secret-key", "/conf/rp-secret",
+              "public-key", "/conf/rp-public",
+              "peer", "public-key", "/conf/bob-rp-public",
+              "outfile", "/storage/rp_out"
+             ]
+
+  rp_bob:
+    image: ghcr.io/rosenpass/rosenpass:edge
+    init: true
+    volumes:
+      - ./bob:/conf:ro
+      - ./rp_bob:/storage
+    command: [
+              "exchange",
+              "secret-key", "/conf/rp-secret",
+              "public-key", "/conf/rp-public",
+              "peer", "public-key", "/conf/alice-rp-public", "endpoint", "rp_alice:9999",
+              "outfile", "/storage/rp_out"
+             ]
 
 networks:
   default:

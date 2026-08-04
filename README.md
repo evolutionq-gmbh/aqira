@@ -53,6 +53,11 @@ By default the destination for the QKD key stream is assumed to be the WireGuard
 peer public key. To override this, specify a `--destination` argument with the
 SAE ID to use.
 
+Additional (PQC-based) key data can be mixed in with the PSK by using the
+`--pqc` parameter. It accepts a path to a file containing a base64-encoded key.
+The file is read, and subsequently deleted, when updating the PSK. For example,
+[Rosenpass](https://rosenpass.eu/)-generated key data may be used in this way.
+
 Note that the program must be run as root, or with CAP_NET_ADMIN privileges.
 
 Operation
@@ -77,6 +82,13 @@ to synchronize both ends of the tunnel. If an additional interval is set, the
 program delays until it has passed. The next PSK is then retrieved from the KMS
 and inserted into the tunnel. The loop then restarts.
 
+### Additional PQC-based key data
+
+If the PQC input is configured, key data is read from it, as soon as it becomes
+available, when a fresh QKD key has been retrieved. Both keys are combined using
+the HKDF key derivation function, based on the BLAKE2S hashing algorithm. The
+result is then used as the final PSK.
+
 ### Synchronization Protocol
 
 A synchronization protocol is used to protect against significant between the
@@ -84,10 +96,11 @@ local instance receiving a QKD key, and the peer doing so. Synchronizing on the
 key position ensures that both sides are at the same position.
 
 Synchronization is based on simple messages transmitted over UDP. Each message
-contains a payload, a simple 4-byte integer indicating a stream position
-followed by a one byte Boolean for retransmitted messages, and a MAC over the
-payload, derived from a PSK. This PSK is simply the first key of the key stream
-shared between both peers.
+contains a payload and a MAC over the payload, derived from a PSK. The payload
+consists of a simple 4-byte integer indicating a stream position, a
+BLAKE2S-based digest of the current PSK, and a one byte Boolean indicating if
+the message was retransmitted. The PSK for the MAC is simply the first key of
+the key stream shared between both peers.
 
 When a new key is retrieved from the key stream, the position of that key is
 sent to the peer. Next, a message from the peer with the same position is

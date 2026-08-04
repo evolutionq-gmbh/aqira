@@ -1,5 +1,7 @@
+import logging
 from types import TracebackType
 from typing import ClassVar, Self, cast
+
 from wgnlpy import (
     PresharedKey,
     PublicKey,
@@ -9,7 +11,6 @@ from wgnlpy.sockaddr import sockaddr_in, sockaddr_in6
 from wgnlpy.wireguardpeer import (
     WireGuardPeer,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 

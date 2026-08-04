@@ -1,19 +1,22 @@
+import argparse
+import logging
+from base64 import standard_b64decode
 from contextlib import nullcontext
 from hashlib import blake2s
 from pathlib import Path
-from socket import AddressFamily, SocketKind, socket, getaddrinfo, IPPROTO_UDP
-from time import sleep, time
+from socket import IPPROTO_UDP, AddressFamily, SocketKind, getaddrinfo, socket
+from time import monotonic, sleep, time
 from types import TracebackType
 from typing import Any, ClassVar, Self
 from uuid import UUID
-import argparse
-import logging
 
-from wgnlpy import PublicKey, PresharedKey  # pyright: ignore[reportMissingTypeStubs]
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from wgnlpy import PresharedKey, PublicKey  # pyright: ignore[reportMissingTypeStubs]
 
-from .wg import WgClient
 from .qkd import QkdClient
-from .sync import SyncClient
+from .sync import SyncClient, SyncParams
+from .wg import WgClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,16 @@ class QkdGuard:
     stream is restarted.
     """
 
+    PQC_TIMEOUT: ClassVar[float] = WgClient.REKEY_DELAY
+    """
+    Time to wait for a PQC key.
+    """
+
+    PQC_RETRY_DELAY: ClassVar[float] = 5.0
+    """
+    Delay between checks for a new PQC key.
+    """
+
     def __init__(
         self,
         qkd_address: tuple[str, int],
@@ -47,6 +60,7 @@ class QkdGuard:
         wg: WgClient,
         peer_address: tuple[Any, ...] | None,
         interval: float = 0.0,
+        pqc_file: Path | None = None,
     ) -> None:
         if interval < 0.0:
             raise ValueError
@@ -59,6 +73,7 @@ class QkdGuard:
         self._wg = wg
         self._initial_psk = wg.peer_psk
         self._interval = interval
+        self._pqc_file = pqc_file
         self._open = False
 
     def __enter__(self) -> Self:
@@ -128,6 +143,50 @@ class QkdGuard:
                 logger.exception("Error in PSK loop")
                 logger.info("Restarting PSK loop")
 
+    def _wait_for_pqc(self) -> bytes | None:
+        if self._pqc_file is None:
+            return None
+        deadline = monotonic() + self.PQC_TIMEOUT
+        while True:
+            try:
+                pqc = self._pqc_file.read_text()
+                self._pqc_file.unlink(missing_ok=True)
+                return standard_b64decode(pqc)
+            except FileNotFoundError:
+                if monotonic() > deadline:
+                    logger.error("PQC file did not appear")
+                    raise
+                sleep(self.PQC_RETRY_DELAY)
+
+    def _fetch_and_sync(
+        self, qkd: QkdClient, sync: SyncClient | None
+    ) -> tuple[PresharedKey, SyncParams] | None:
+        psk_data = qkd.wait_key()
+        if psk_data is None:
+            return None
+
+        psk, position = psk_data
+
+        pqc = self._wait_for_pqc()
+        if pqc is not None:
+            kdf = HKDF(
+                algorithm=hashes.BLAKE2s(digest_size=32),
+                length=32,
+                salt=None,
+                info=b"pqc-kdf",
+                backend=None,
+            )
+            psk = PresharedKey(kdf.derive(bytes(psk) + pqc))
+
+        params = SyncParams(
+            position=position, key_hash=blake2s(bytes(psk), digest_size=32).digest()
+        )
+
+        if sync and not sync.sync_current_position(params, timeout=self.SYNC_TIMEOUT):
+            return None
+
+        return psk, params
+
     def _update_psk_loop(self, qkd: QkdClient) -> None:
         if (auth_psk := qkd.wait_key()) is None:
             logger.warning("QKD stream closed")
@@ -140,10 +199,7 @@ class QkdGuard:
             sync_ctx = nullcontext()
         with sync_ctx as sync:
             logger.debug("Wait for initial key")
-            if (psk := qkd.wait_key()) is None or (
-                sync
-                and not sync.sync_current_position(psk[1], timeout=self.SYNC_TIMEOUT)
-            ):
+            if (psk := self._fetch_and_sync(qkd, sync)) is None:
                 logger.warning("Unable to fetch and sync initial key")
                 return
 
@@ -157,13 +213,7 @@ class QkdGuard:
                     sleep(self._interval - key_age)
 
                 logger.debug("Wait for key")
-                psk = qkd.wait_key()
-                if psk is None or (
-                    sync
-                    and not sync.sync_current_position(
-                        psk[1], timeout=self.SYNC_TIMEOUT
-                    )
-                ):
+                if (psk := self._fetch_and_sync(qkd, sync)) is None:
                     logger.warning("Unable to fetch and sync key")
                     break
 
@@ -268,6 +318,12 @@ def main() -> None:
         required=True,
         type=PublicKey,
         help="Public key of the peer to share the PSK with",
+    )
+    parser.add_argument(
+        "--pqc",
+        metavar="FILE",
+        type=Path,
+        help="Path where PQC key data is written to",
     )
     parser.add_argument(
         "--interval",
@@ -380,6 +436,7 @@ def main() -> None:
                 wg,
                 peer_address[2] if peer_address is not None else None,
                 args.interval,
+                args.pqc,
             ) as client:
                 client.run()
 

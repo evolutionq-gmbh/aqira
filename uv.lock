@@ -22,7 +22,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ksnp", git = "https://github.com/evolutionq-gmbh/ksnp.git?subdirectory=python&rev=v0.4.2" },
+    { name = "ksnp", git = "https://github.com/evolutionq-gmbh/ksnp.git?subdirectory=python&rev=v0.4.4" },
     { name = "wgnlpy", specifier = ">=0.1.5" },
 ]
 
@@ -158,8 +158,8 @@ wheels = [
 
 [[package]]
 name = "ksnp"
-version = "0.4.2"
-source = { git = "https://github.com/evolutionq-gmbh/ksnp.git?subdirectory=python&rev=v0.4.2#5f028ec8cc11544ba1140476deffaa5a90bd5799" }
+version = "0.4.4"
+source = { git = "https://github.com/evolutionq-gmbh/ksnp.git?subdirectory=python&rev=v0.4.4#818348e72a01ed33a9d173f6beb06ad8e2f28ab4" }
 
 [[package]]
 name = "librt"
