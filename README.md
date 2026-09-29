@@ -51,7 +51,8 @@ with the paths to the certificate and private key files respectively.
 
 By default the destination for the QKD key stream is assumed to be the WireGuard
 peer public key. To override this, specify a `--destination` argument with the
-SAE ID to use.
+SAE ID to use. The stream ID defaults to a hash generated from the WireGuard
+public keys, but can be specified using the `--stream` parameter.
 
 Additional (PQC-based) key data can be mixed in with the PSK by using the
 `--pqc` parameter. It accepts a path to a file containing a base64-encoded key.

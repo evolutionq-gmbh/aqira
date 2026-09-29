@@ -61,6 +61,7 @@ class QkdGuard:
         peer_address: tuple[Any, ...] | None,
         interval: float = 0.0,
         pqc_file: Path | None = None,
+        stream_id: UUID | None = None,
     ) -> None:
         if interval < 0.0:
             raise ValueError
@@ -74,6 +75,7 @@ class QkdGuard:
         self._initial_psk = wg.peer_psk
         self._interval = interval
         self._pqc_file = pqc_file
+        self._stream_id = stream_id
         self._open = False
 
     def __enter__(self) -> Self:
@@ -98,18 +100,22 @@ class QkdGuard:
         key_delay = self._interval + (
             WgClient.REKEY_DELAY - self._interval % WgClient.REKEY_DELAY
         )
-        stream_id = UUID(
-            bytes=blake2s(
-                bytes(
-                    a ^ b
-                    for a, b in zip(
-                        self._wg.public_key,
-                        self._wg.peer_key,
-                        strict=True,
-                    )
-                ),
-                digest_size=16,
-            ).digest()
+        stream_id = (
+            self._stream_id
+            if self._stream_id is not None
+            else UUID(
+                bytes=blake2s(
+                    bytes(
+                        a ^ b
+                        for a, b in zip(
+                            self._wg.public_key,
+                            self._wg.peer_key,
+                            strict=True,
+                        )
+                    ),
+                    digest_size=16,
+                ).digest()
+            )
         )
 
         restart = False
@@ -307,6 +313,13 @@ def main() -> None:
         help="SAE of the stream destination",
     )
     parser.add_argument(
+        "--stream",
+        "-s",
+        metavar="STREAM_ID",
+        type=UUID,
+        help="Key stream ID to use",
+    )
+    parser.add_argument(
         "--interface",
         metavar="IFACE",
         required=True,
@@ -437,6 +450,7 @@ def main() -> None:
                 peer_address[2] if peer_address is not None else None,
                 args.interval,
                 args.pqc,
+                args.stream,
             ) as client:
                 client.run()
 
