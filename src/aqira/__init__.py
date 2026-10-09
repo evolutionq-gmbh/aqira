@@ -7,7 +7,7 @@ from pathlib import Path
 from socket import IPPROTO_UDP, AddressFamily, SocketKind, getaddrinfo, socket
 from time import monotonic, sleep, time
 from types import TracebackType
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, Self, cast
 from uuid import UUID
 
 from cryptography.hazmat.primitives import hashes
@@ -55,7 +55,7 @@ class QkdGuard:
         self,
         qkd_address: tuple[str, int],
         qkd_tls_params: tuple[Path | None, Path | None, Path | None],
-        qkd_destination: str | None,
+        qkd_destination: str | tuple[str, str] | None,
         sync_socket: socket | None,
         wg: WgClient,
         peer_address: tuple[Any, ...] | None,
@@ -437,6 +437,11 @@ def main() -> None:
         else:
             sync_socket_ctx = nullcontext()
 
+        destination: str | tuple[str, str] = cast("str", args.destination)
+        if "/" in destination:
+            parts = destination.split("/", 1)
+            destination = (parts[1], parts[0])
+
         with sync_socket_ctx as sync_socket:
             if sync_socket is not None:
                 sync_socket.bind((args.sync_address or "", args.sync_port))
@@ -444,7 +449,7 @@ def main() -> None:
             with QkdGuard(
                 (args.host, args.port),
                 (args.ca, args.certificate, args.key),
-                args.destination,
+                destination,
                 sync_socket,
                 wg,
                 peer_address[2] if peer_address is not None else None,

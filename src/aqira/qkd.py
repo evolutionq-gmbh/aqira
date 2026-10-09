@@ -22,7 +22,7 @@ class QkdClient:
         qkd_address: tuple[str, int],
         qkd_tls_params: tuple[Path | None, Path | None, Path | None],
         stream_id: UUID,
-        destination: str,
+        destination: str | tuple[str, str],
         key_size: int,
         key_delay: float,
     ) -> None:
