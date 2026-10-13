@@ -33,7 +33,7 @@ class QkdGuard:
     stream is restarted, resetting the PSK.
     """
 
-    SYNC_TIMEOUT: ClassVar[float | None] = PSK_RETRIES * WgClient.REKEY_TIMEOUT
+    SYNC_TIMEOUT: ClassVar[float | None] = 10 * WgClient.REKEY_TIMEOUT
     """
     Time to allow for stream synchronization.
 
