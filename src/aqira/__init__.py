@@ -41,7 +41,7 @@ class QkdGuard:
     stream is restarted.
     """
 
-    PQC_TIMEOUT: ClassVar[float] = WgClient.REKEY_DELAY
+    PQC_TIMEOUT: ClassVar[float] = 180.0
     """
     Time to wait for a PQC key.
     """
