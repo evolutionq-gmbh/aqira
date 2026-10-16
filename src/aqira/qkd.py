@@ -38,7 +38,7 @@ class QkdClient:
         self._write_buf = bytearray()
         self._client = client.Client(self._read_buf, self._write_buf)
 
-        self._sock: socket | None = None
+        self._sock: socket | ssl.SSLSocket | None = None
         self._selector: selectors.DefaultSelector | None = None
 
     def __enter__(self) -> Self:
@@ -51,7 +51,8 @@ class QkdClient:
         _exc_val: BaseException | None,
         _exc_tb: TracebackType | None,
     ) -> bool | None:
-        self.close()
+        if self._sock is not None:
+            self.close()
         return None
 
     def open(self) -> None:
@@ -90,14 +91,22 @@ class QkdClient:
 
             raise
 
-    def close(self) -> None:
+    def close(self, wait_for_server: bool = True) -> None:
+        """
+        Close the connection to the server.
+
+        If ``wait_for_server`` is True (the default), a clean shutdown
+        is attempted, waiting for the server to close the connection as
+        well. Otherwise, the connection is simply closed.
+        """
         assert self._sock is not None, "must be connected"
         assert self._selector is not None, "must be connected"
 
-        self._client.close_connection(CloseDirection.WRITE)
-        while self._wait_event() is not None:
-            # Drain the connection
-            pass
+        if wait_for_server:
+            self._client.close_connection(CloseDirection.WRITE)
+            while self._wait_event() is not None:
+                # Drain the connection
+                pass
 
         with contextlib.suppress(Exception):
             self._selector.close()
@@ -151,7 +160,7 @@ class QkdClient:
                         data = self._sock.recv(4096)
                     except OSError:
                         logger.exception("Error on QKD connection")
-                        self._sock = None
+                        self.close(False)
                         return None
                     if len(data) == 0:
                         self._client.close_connection(CloseDirection.READ)
@@ -163,7 +172,7 @@ class QkdClient:
                         count = self._sock.send(self._write_buf)
                     except OSError:
                         logger.exception("Error on QKD connection")
-                        self._sock = None
+                        self.close(False)
                         return None
                     del self._write_buf[:count]
 

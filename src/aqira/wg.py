@@ -47,7 +47,8 @@ class WgClient:
         _exc_val: BaseException | None,
         _exc_tb: TracebackType | None,
     ) -> bool | None:
-        self.close()
+        if self._wg is not None:
+            self.close()
         return None
 
     @property
