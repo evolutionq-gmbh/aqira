@@ -59,6 +59,9 @@ Additional (PQC-based) key data can be mixed in with the PSK by using the
 The file is read, and subsequently deleted, when updating the PSK. For example,
 [Rosenpass](https://rosenpass.eu/)-generated key data may be used in this way.
 
+For each parameter it is possible to set it via a matching environment variable,
+labeled `AQIRA_<PARAMETER_NAME>` (in all caps).
+
 Note that the program must be run as root, or with CAP_NET_ADMIN privileges.
 
 Operation

@@ -1,4 +1,3 @@
-import argparse
 import logging
 from base64 import standard_b64decode
 from contextlib import nullcontext
@@ -10,6 +9,7 @@ from types import TracebackType
 from typing import Any, ClassVar, Self, cast
 from uuid import UUID
 
+import configargparse  # pyright: ignore[reportMissingTypeStubs]
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from wgnlpy import PresharedKey, PublicKey  # pyright: ignore[reportMissingTypeStubs]
@@ -271,16 +271,18 @@ class QkdGuard:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = configargparse.ArgumentParser()
     parser.add_argument(
         "--host",
         metavar="HOST",
+        env_var="AQIRA_HOST",
         required=True,
         help="Host of the QKD interface to retrieve keys from",
     )
     parser.add_argument(
         "--port",
         metavar="PORT",
+        env_var="AQIRA_PORT",
         required=True,
         type=int,
         help="Port of the QKD interface to retrieve keys from",
@@ -288,6 +290,7 @@ def main() -> None:
     parser.add_argument(
         "--ca",
         metavar="PEM_FILE",
+        env_var="AQIRA_CA",
         type=Path,
         help="Path to the root store for certificate verification",
     )
@@ -295,6 +298,7 @@ def main() -> None:
         "--certificate",
         "-c",
         metavar="PEM_FILE",
+        env_var="AQIRA_CERTIFICATE",
         type=Path,
         help="Path to the client certificate",
     )
@@ -302,6 +306,7 @@ def main() -> None:
         "--key",
         "-k",
         metavar="PEM_FILE",
+        env_var="AQIRA_KEY",
         type=Path,
         help="Path to the client private key",
     )
@@ -309,6 +314,7 @@ def main() -> None:
         "--destination",
         "-d",
         metavar="SAE",
+        env_var="AQIRA_DESTINATION",
         type=str,
         help="SAE of the stream destination",
     )
@@ -316,18 +322,21 @@ def main() -> None:
         "--stream",
         "-s",
         metavar="STREAM_ID",
+        env_var="AQIRA_STREAM",
         type=UUID,
         help="Key stream ID to use",
     )
     parser.add_argument(
         "--interface",
         metavar="IFACE",
+        env_var="AQIRA_INTERFACE",
         required=True,
         help="Name of the WireGuard interface to set the PSK of",
     )
     parser.add_argument(
         "--peer_key",
         metavar="PUBKEY",
+        env_var="AQIRA_PEER_KEY",
         required=True,
         type=PublicKey,
         help="Public key of the peer to share the PSK with",
@@ -335,12 +344,14 @@ def main() -> None:
     parser.add_argument(
         "--pqc",
         metavar="FILE",
+        env_var="AQIRA_PQC",
         type=Path,
         help="Path where PQC key data is written to",
     )
     parser.add_argument(
         "--interval",
         metavar="SECONDS",
+        env_var="AQIRA_INTERVAL",
         required=False,
         type=float,
         default=0.0,
@@ -349,20 +360,15 @@ def main() -> None:
     parser.add_argument(
         "--sync_port",
         metavar="PORT",
+        env_var="AQIRA_SYNC_PORT",
         required=False,
         type=int,
         help="Port to listen on for synchronization messages",
     )
     parser.add_argument(
-        "--peer_port",
-        metavar="PORT",
-        required=False,
-        type=int,
-        help="Port to send synchronization messages to",
-    )
-    parser.add_argument(
         "--sync_address",
         metavar="ADDRESS",
+        env_var="AQIRA_SYNC_ADDRESS",
         required=False,
         type=str,
         default=None,
@@ -370,26 +376,37 @@ def main() -> None:
     )
     parser.add_argument(
         "--peer_address",
-        metavar="ADDRESS",
+        metavar="HOST",
+        env_var="AQIRA_PEER_ADDRESS",
         required=False,
         type=str,
         default=None,
-        help="Peer address to send synchronization messages to (derived from the WireGuard link if not specified)",
+        help="Peer host to send synchronization messages to (derived from the WireGuard link if not specified)",
+    )
+    parser.add_argument(
+        "--peer_port",
+        metavar="PORT",
+        env_var="AQIRA_PEER_PORT",
+        required=False,
+        type=int,
+        help="Port to send synchronization messages to",
     )
     parser.add_argument(
         "--quiet",
         "-q",
+        env_var="AQIRA_QUIET",
         action="store_true",
         help="Disable normal log output",
     )
     parser.add_argument(
         "--verbose",
         "-v",
+        env_var="AQIRA_VERBOSE",
         action="store_true",
         help="Enable debug log output",
     )
 
-    args = parser.parse_args()
+    args = cast("configargparse.Namespace", parser.parse_args())  # pyright: ignore[reportUnknownMemberType]
 
     if args.verbose:
         level = logging.DEBUG
