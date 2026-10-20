@@ -437,8 +437,8 @@ def main() -> None:
         else:
             sync_socket_ctx = nullcontext()
 
-        destination: str | tuple[str, str] = cast("str", args.destination)
-        if "/" in destination:
+        destination: str | tuple[str, str] | None = cast("str | None", args.destination)
+        if destination is not None and "/" in destination:
             parts = destination.split("/", 1)
             destination = (parts[1], parts[0])
 
